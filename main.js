@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -193,17 +194,38 @@ class Boid {
         // Random phase for animation
         this.phase = Math.random() * Math.PI * 2;
 
-        // Create particle with simple material
-        const geometry = new THREE.SphereGeometry(this.size, 12, 12);
-        const material = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
+        // Cache curl force for performance (update less frequently)
+        this.cachedCurlForce = new THREE.Vector3(0, 0, 0);
+        this.curlUpdateCounter = Math.floor(Math.random() * 5); // Stagger updates
+
+        // Random color variation - blues, purples, cyans, whites
+        const colorChoice = Math.random();
+        let color;
+        if (colorChoice < 0.3) {
+            color = new THREE.Color(0.4 + Math.random() * 0.6, 0.6 + Math.random() * 0.4, 1.0); // Blue-cyan
+        } else if (colorChoice < 0.6) {
+            color = new THREE.Color(0.7 + Math.random() * 0.3, 0.5 + Math.random() * 0.3, 1.0); // Purple-pink
+        } else {
+            color = new THREE.Color(0.8 + Math.random() * 0.2, 0.8 + Math.random() * 0.2, 0.9 + Math.random() * 0.1); // White
+        }
+
+        // Create particle with physically-based material for proper lighting
+        const geometry = new THREE.SphereGeometry(this.size, 16, 16);
+        const material = new THREE.MeshStandardMaterial({
+            color: color,
+            emissive: color,
+            emissiveIntensity: 0.3,
+            metalness: 0.3,
+            roughness: 0.4,
             transparent: true,
-            opacity: 0.7
+            opacity: 0.85
         });
 
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.copy(this.position);
         this.mesh.rotation.copy(this.rotation);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
         scene.add(this.mesh);
     }
 
@@ -339,7 +361,15 @@ class Boid {
         const cohesion = this.cohesion(boids);
         const separation = this.separation(boids);
         const center = this.centerAttraction();
-        const curl = this.curlForce(time);
+
+        // Update curl force only every 5 frames for performance
+        this.curlUpdateCounter++;
+        if (this.curlUpdateCounter >= 5) {
+            this.cachedCurlForce = this.curlForce(time);
+            this.curlUpdateCounter = 0;
+        }
+        const curl = this.cachedCurlForce;
+
         const vortex = this.vortexForce(time);
 
         // Apply forces with weights
@@ -413,14 +443,27 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.2;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
+
+// ===========================
+// ORBIT CONTROLS - User Camera Control
+// ===========================
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.minDistance = 5;
+controls.maxDistance = 50;
+controls.maxPolarAngle = Math.PI; // Allow full rotation
+controls.autoRotate = false;
 
 // ===========================
 // STARFIELD BACKGROUND
 // ===========================
 function createStarfield() {
     const starGeometry = new THREE.BufferGeometry();
-    const starCount = 6000;
+    const starCount = 3000;  // Reduced from 6000 for better performance
     const positions = new Float32Array(starCount * 3);
     const colors = new Float32Array(starCount * 3);
     const sizes = new Float32Array(starCount);
@@ -470,14 +513,38 @@ const starfield = createStarfield();
 // ===========================
 // LIGHTING
 // ===========================
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+const ambientLight = new THREE.AmbientLight(0x4466ff, 0.3);
 scene.add(ambientLight);
+
+// Main directional light from top-right
+const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+mainLight.position.set(10, 15, 10);
+mainLight.castShadow = true;
+mainLight.shadow.mapSize.width = 1024;
+mainLight.shadow.mapSize.height = 1024;
+mainLight.shadow.camera.near = 0.5;
+mainLight.shadow.camera.far = 50;
+mainLight.shadow.camera.left = -20;
+mainLight.shadow.camera.right = 20;
+mainLight.shadow.camera.top = 20;
+mainLight.shadow.camera.bottom = -20;
+scene.add(mainLight);
+
+// Fill light from opposite side for depth
+const fillLight = new THREE.DirectionalLight(0x8899ff, 0.6);
+fillLight.position.set(-8, -5, -8);
+scene.add(fillLight);
+
+// Rim light from behind for definition
+const rimLight = new THREE.DirectionalLight(0xff88ff, 0.4);
+rimLight.position.set(0, 5, -15);
+scene.add(rimLight);
 
 // ===========================
 // BOIDS INITIALIZATION
 // ===========================
 const boids = [];
-const boidCount = 2000;
+const boidCount = 800;  // Reduced from 2000 for better performance
 
 console.log('Initializing boids with curl noise...');
 for (let i = 0; i < boidCount; i++) {
@@ -494,9 +561,9 @@ composer.addPass(renderPass);
 
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.3,  // strength - much reduced
-    0.4,  // radius
-    0.85  // threshold - higher means less bloom
+    0.15,  // strength - reduced for better performance
+    0.3,   // radius
+    0.9    // threshold - higher means less bloom, better performance
 );
 composer.addPass(bloomPass);
 
@@ -514,11 +581,10 @@ function animate() {
         boid.update(boids, time);
     }
 
-    const cameraSpeed = 0.08;
-    camera.position.x = Math.sin(time * cameraSpeed) * 3;
-    camera.position.z = 18 + Math.cos(time * cameraSpeed) * 2;
-    camera.lookAt(0, 0, 0);
+    // Update controls for smooth damping
+    controls.update();
 
+    // Slow starfield rotation for subtle motion
     starfield.rotation.y += 0.00015;
     starfield.rotation.x += 0.00008;
 
