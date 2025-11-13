@@ -193,29 +193,18 @@ class Boid {
         // Random phase for animation
         this.phase = Math.random() * Math.PI * 2;
 
-        // Create particle with EMISSIVE material for glow
+        // Create particle with simple material
         const geometry = new THREE.SphereGeometry(this.size, 12, 12);
-        const material = new THREE.MeshStandardMaterial({
+        const material = new THREE.MeshBasicMaterial({
             color: 0xffffff,
-            emissive: 0xffffff,
-            emissiveIntensity: 2.5,
             transparent: true,
-            opacity: 0.9,
-            roughness: 0.3,
-            metalness: 0.1
+            opacity: 0.7
         });
 
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.copy(this.position);
         this.mesh.rotation.copy(this.rotation);
         scene.add(this.mesh);
-
-        // Add individual point light for stronger glow effect (only for some boids)
-        if (Math.random() > 0.85) {
-            this.light = new THREE.PointLight(0xffffff, 1.2, 3);
-            this.light.position.copy(this.position);
-            scene.add(this.light);
-        }
     }
 
     // Boid flocking rules
@@ -390,22 +379,9 @@ class Boid {
         this.mesh.position.copy(this.position);
         this.mesh.rotation.copy(this.rotation);
 
-        // Update light position if this boid has one
-        if (this.light) {
-            this.light.position.copy(this.position);
-        }
-
-        // Animate intensity for pulsating glow effect
-        const distance = this.position.length();
-        const coreBrightness = 1.0 - Math.min(distance / (this.bounds * 0.5), 1.0);
-        const pulse = 0.7 + Math.sin(time * 3 + this.phase) * 0.3;
-
-        this.mesh.material.emissiveIntensity = (1.5 + coreBrightness * 2.0) * pulse;
-        this.mesh.material.opacity = 0.85 + pulse * 0.15;
-
-        if (this.light) {
-            this.light.intensity = (0.8 + coreBrightness * 1.5) * pulse;
-        }
+        // Subtle opacity animation
+        const pulse = 0.7 + Math.sin(time * 3 + this.phase) * 0.1;
+        this.mesh.material.opacity = pulse;
     }
 
     dispose() {
@@ -487,82 +463,15 @@ function createStarfield() {
 const starfield = createStarfield();
 
 // ===========================
-// GOD-RAY BEAM
+// GOD-RAY BEAM (REMOVED)
 // ===========================
-function createGodRay() {
-    const godRayGeometry = new THREE.ConeGeometry(10, 25, 32, 1, true);
-    const godRayMaterial = new THREE.ShaderMaterial({
-        transparent: true,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        uniforms: {
-            uTime: { value: 0 }
-        },
-        vertexShader: `
-            varying vec2 vUv;
-            varying vec3 vPosition;
-
-            void main() {
-                vUv = uv;
-                vPosition = position;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }
-        `,
-        fragmentShader: `
-            uniform float uTime;
-            varying vec2 vUv;
-            varying vec3 vPosition;
-
-            void main() {
-                float fadeY = 1.0 - smoothstep(0.0, 1.0, vUv.y);
-                fadeY = pow(fadeY, 1.5);
-
-                float fadeX = 1.0 - abs(vUv.x - 0.5) * 2.0;
-                fadeX = pow(fadeX, 3.0);
-
-                float rays1 = sin(vUv.x * 40.0 + uTime * 3.0) * 0.5 + 0.5;
-                float rays2 = sin(vUv.x * 25.0 - uTime * 2.0 + 1.5) * 0.5 + 0.5;
-                float rays = (rays1 + rays2) * 0.5;
-                rays = pow(rays, 4.0) * 0.4;
-
-                float fog = sin(vUv.y * 10.0 + uTime) * 0.5 + 0.5;
-                fog = fog * 0.15;
-
-                float alpha = fadeY * fadeX * (0.12 + rays + fog);
-
-                vec3 color = vec3(1.0, 0.98, 0.92);
-                gl_FragColor = vec4(color, alpha);
-            }
-        `
-    });
-
-    const godRay = new THREE.Mesh(godRayGeometry, godRayMaterial);
-    godRay.position.y = -12;
-    godRay.rotation.x = Math.PI;
-    scene.add(godRay);
-    return godRay;
-}
-
-const godRay = createGodRay();
+// Removed - cylinder/cone was too visible
 
 // ===========================
 // LIGHTING
 // ===========================
-const ambientLight = new THREE.AmbientLight(0x222244, 0.3);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
 scene.add(ambientLight);
-
-const mainLight = new THREE.PointLight(0xffffff, 3, 60);
-mainLight.position.set(0, -8, 0);
-scene.add(mainLight);
-
-const rimLight1 = new THREE.PointLight(0x4466ff, 1, 40);
-rimLight1.position.set(10, 5, 10);
-scene.add(rimLight1);
-
-const rimLight2 = new THREE.PointLight(0xff6644, 0.8, 40);
-rimLight2.position.set(-10, 5, -10);
-scene.add(rimLight2);
 
 // ===========================
 // BOIDS INITIALIZATION
@@ -585,9 +494,9 @@ composer.addPass(renderPass);
 
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    2.0,
-    1.0,
-    0.1
+    0.3,  // strength - much reduced
+    0.4,  // radius
+    0.85  // threshold - higher means less bloom
 );
 composer.addPass(bloomPass);
 
@@ -605,8 +514,6 @@ function animate() {
         boid.update(boids, time);
     }
 
-    godRay.material.uniforms.uTime.value = time;
-
     const cameraSpeed = 0.08;
     camera.position.x = Math.sin(time * cameraSpeed) * 3;
     camera.position.z = 18 + Math.cos(time * cameraSpeed) * 2;
@@ -614,9 +521,6 @@ function animate() {
 
     starfield.rotation.y += 0.00015;
     starfield.rotation.x += 0.00008;
-
-    rimLight1.intensity = 1.0 + Math.sin(time * 0.5) * 0.3;
-    rimLight2.intensity = 0.8 + Math.cos(time * 0.7) * 0.3;
 
     composer.render();
 }
