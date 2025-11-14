@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Sphere Test</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      width: 100%;
+      height: 100vh;
+      overflow: hidden;
+      background: #141515;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    // Create scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x141515);
+
+    // Create camera
+    const camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.z = 5;
+
+    // Zoom control
+    let targetZoom = 5;
+    let currentZoom = 5;
+
+    window.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      targetZoom += event.deltaY * 0.01;
+      targetZoom = Math.max(2, Math.min(targetZoom, 15)); // Clamp between 2 and 15
+    }, { passive: false });
+
+    // Create renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    // Add light
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(5, 5, 5);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+    // Create spheres
+    const geometry = new THREE.SphereGeometry(0.2, 32, 32);
+
+    // Gray/white colors like the original
+    const colors = ['#ffffff', '#cccccc', '#aaaaaa', '#888888'];
+    const spheres = [];
+
+    for (let i = 0; i < 40; i++) {
+      // Randomly select gray or white color
+      const randomColorIndex = Math.floor(Math.random() * colors.length);
+
+      const material = new THREE.MeshStandardMaterial({
+        color: colors[randomColorIndex],
+        roughness: 0.5,
+        metalness: 0.2
+      });
+
+      const sphere = new THREE.Mesh(geometry, material);
+
+      // Exact position calculation from hoisted.81170750.js line
+      // this.position0.set((random()-.5)*12,(random()-.5)*12,a?7+random():(random()-.5)*6)
+      const posX = (Math.random() - 0.5) * 12;
+      const posY = (Math.random() - 0.5) * 12;
+      // Some spheres (last 5) positioned farther back like transparent spheres
+      const isFarBack = i >= 35;
+      const posZ = isFarBack ? 7 + Math.random() : (Math.random() - 0.5) * 6;
+
+      sphere.position.set(posX, posY, posZ);
+
+      // Exact velocity calculation from hoisted.js:
+      // this.velocity0.copy(this.position0).multiplyScalar(-2)
+      sphere.userData.velocity = new THREE.Vector3(posX, posY, posZ).multiplyScalar(-2);
+
+      scene.add(sphere);
+      spheres.push(sphere);
+    }
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Animation loop with proper time-based physics
+    let lastTime = performance.now();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const currentTime = performance.now();
+      const deltaTime = (currentTime - lastTime) * 0.001; // Convert to seconds
+      lastTime = currentTime;
+
+      // Smooth zoom
+      currentZoom += (targetZoom - currentZoom) * 0.1;
+      camera.position.z = currentZoom;
+
+      // Update spheres
+      spheres.forEach(sphere => {
+        const distFromCenter = sphere.position.length();
+
+        // Calculate acceleration toward center (gravity) - stronger when further out
+        const gravityStrength = 2.0 + (distFromCenter * 0.5); // Increases with distance
+        const gravityAcceleration = sphere.position.clone().negate().multiplyScalar(gravityStrength);
+
+        // Add swirling/tangential acceleration
+        const tangentialAcceleration = new THREE.Vector3(
+          -sphere.position.y,
+          sphere.position.x,
+          0
+        ).multiplyScalar(0.5);
+
+        // Combine accelerations
+        const totalAcceleration = gravityAcceleration.add(tangentialAcceleration);
+
+        // Update velocity: v = v + a * dt
+        sphere.userData.velocity.addScaledVector(totalAcceleration, deltaTime);
+
+        // Update position: p = p + v * dt
+        sphere.position.addScaledVector(sphere.userData.velocity, deltaTime);
+
+        // Soft boundary containment - push back if too far from center
+        const maxRadius = 5;
+        if (distFromCenter > maxRadius) {
+          const pushBackStrength = (distFromCenter - maxRadius) * 2.0;
+          const pushBackDir = sphere.position.clone().normalize().multiplyScalar(-pushBackStrength);
+          sphere.position.add(pushBackDir);
+
+          // Dampen velocity when hitting soft boundary
+          sphere.userData.velocity.multiplyScalar(0.8);
+        }
+
+        // Hard boundary bouncing (safety net)
+        const hardBounds = 6;
+        const restitution = 0.95;
+
+        if (Math.abs(sphere.position.x) > hardBounds) {
+          sphere.position.x = Math.sign(sphere.position.x) * hardBounds;
+          sphere.userData.velocity.x *= -restitution;
+        }
+        if (Math.abs(sphere.position.y) > hardBounds) {
+          sphere.position.y = Math.sign(sphere.position.y) * hardBounds;
+          sphere.userData.velocity.y *= -restitution;
+        }
+        if (Math.abs(sphere.position.z) > 3) {
+          sphere.position.z = Math.sign(sphere.position.z) * 3;
+          sphere.userData.velocity.z *= -restitution;
+        }
+
+        // Apply damping: v = v * damping^dt (proper time-based damping)
+        const damping = 0.95;
+        sphere.userData.velocity.multiplyScalar(Math.pow(damping, deltaTime));
+
+        // Rotation based on velocity
+        const angularSpeed = sphere.userData.velocity.length();
+        sphere.rotation.x += angularSpeed * deltaTime * 0.1;
+        sphere.rotation.y += angularSpeed * deltaTime * 0.1;
+      });
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    console.log('✓ Simple test loaded successfully!');
+  </script>
+</body>
+</html>
