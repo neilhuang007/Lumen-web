@@ -51,19 +51,10 @@
     import * as THREE from 'three';
 
     // ============================================================================
-    // VERTEX SHADER - Exact from original
+    // VERTEX SHADER - Fixed (no redeclarations)
     // ============================================================================
     const vertexShader = `
-      attribute vec3 position;
-      attribute vec3 normal;
-      attribute vec2 uv;
-
-      uniform mat4 modelViewMatrix;
-      uniform mat4 projectionMatrix;
-      uniform mat4 modelMatrix;
-      uniform mat3 normalMatrix;
-      uniform vec3 cameraPosition;
-
+      // Custom uniforms only (THREE.js provides the standard ones)
       uniform vec3 u_lightPosition;
       uniform vec4 u_selfPositionRadius;
       uniform vec4 u_selfRotation;
@@ -109,7 +100,7 @@
     `;
 
     // ============================================================================
-    // FRAGMENT SHADER - With neighbor tracking
+    // FRAGMENT SHADER - With neighbor tracking (fixed)
     // ============================================================================
     const fragmentShader = `
       #define NEIGHBOUR_COUNT 49
@@ -133,7 +124,7 @@
       uniform vec3 u_bgColor;
       uniform vec3 u_color;
       uniform vec3 u_lightPosition;
-      uniform vec3 cameraPosition;
+      // cameraPosition is automatically provided by THREE.js
 
       const float PI = 3.14159265359;
 
