@@ -163,7 +163,7 @@ export const CONFIG = {
   // === POST-PROCESSING EFFECTS ===
   postEffects: {
     bloom: {
-      enabled: true,
+      enabled: false, // Disabled in simplified version
       amount: 1.0,
       radius: 0,
       threshold: 0.1,
@@ -223,7 +223,9 @@ export const CONFIG = {
   },
 
   // === ASSET PATHS ===
+  // Assets are optional - animation uses procedural geometry if not available
   assets: {
+    useExternalAssets: false, // Set to true if you have custom textures/models
     textures: {
       matcap: 'assets/textures/matcap.exr',
       matcapMobile: 'assets/textures/matcap_ld.exr',
@@ -264,6 +266,9 @@ export function getEffectiveConfig() {
       config.assets.textures.matcap = config.assets.textures.matcapMobile;
       config.assets.models.sphere = config.assets.models.sphereMobile;
     }
+
+    // Disable external assets on mobile
+    config.assets.useExternalAssets = false;
   }
 
   return config;

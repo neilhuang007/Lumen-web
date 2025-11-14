@@ -156,20 +156,12 @@ export class FloatingSpheresAnimation {
   render() {
     if (!this.sceneManager || !this.postEffects) return;
 
-    // Render with post-processing
-    if (this.config.postEffects.bloom.enabled) {
-      this.postEffects.render(
-        this.sceneManager.scene,
-        this.sceneManager.camera,
-        this.paintEffect
-      );
-    } else {
-      // Direct render without post-processing
-      this.sceneManager.renderer.render(
-        this.sceneManager.scene,
-        this.sceneManager.camera
-      );
-    }
+    // Render the scene
+    this.postEffects.render(
+      this.sceneManager.scene,
+      this.sceneManager.camera,
+      this.paintEffect
+    );
   }
 
   /**

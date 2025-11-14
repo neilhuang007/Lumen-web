@@ -22,11 +22,15 @@ export class SphereRenderer {
   async init(physicsBodies) {
     console.log(`Creating ${physicsBodies.length} sphere meshes...`);
 
+    // Note: Using procedural geometry - external assets not required
+
     // Get current accent color
     this.currentColor = this.config.spheres.colorPalette[0];
 
     // Create geometry (shared by all spheres)
-    const geometry = new THREE.SphereGeometry(1, 32, 32);
+    // Use higher detail for desktop, lower for mobile
+    const segments = window.innerWidth > 768 ? 32 : 16;
+    const geometry = new THREE.SphereGeometry(1, segments, segments);
 
     // Create spheres based on configuration
     let bodyIndex = 0;
