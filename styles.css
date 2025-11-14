@@ -383,7 +383,7 @@ body {
 }
 #canvas {
     pointer-events:auto;
-    display:none
+    display:block
 }
 .is-ready #canvas {
     display:block
