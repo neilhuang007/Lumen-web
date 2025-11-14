@@ -225,15 +225,16 @@ export const CONFIG = {
   // === ASSET PATHS ===
   // Assets are optional - animation uses procedural geometry if not available
   assets: {
-    useExternalAssets: false, // Set to true if you have custom textures/models
+    useExternalAssets: true, // Set to true to use custom models/textures
     textures: {
       matcap: 'assets/textures/matcap.exr',
       matcapMobile: 'assets/textures/matcap_ld.exr',
       blueNoise: 'assets/textures/LDR_RGB1_0.png'
     },
     models: {
-      sphere: 'assets/models/cross.buf',
-      sphereMobile: 'assets/models/cross_ld.buf'
+      // Using sphere models - different sizes for different detail levels
+      sphere: 'assets/models/sphere_l.buf',      // Desktop: Large (highest detail)
+      sphereMobile: 'assets/models/sphere_m.buf' // Mobile: Medium detail
     }
   }
 };
@@ -267,8 +268,6 @@ export function getEffectiveConfig() {
       config.assets.models.sphere = config.assets.models.sphereMobile;
     }
 
-    // Disable external assets on mobile
-    config.assets.useExternalAssets = false;
   }
 
   return config;

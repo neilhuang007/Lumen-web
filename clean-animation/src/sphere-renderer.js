@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { BufLoader } from './buf-loader.js';
 
 export class SphereRenderer {
   constructor(scene, camera, config) {
@@ -22,15 +23,36 @@ export class SphereRenderer {
   async init(physicsBodies) {
     console.log(`Creating ${physicsBodies.length} sphere meshes...`);
 
-    // Note: Using procedural geometry - external assets not required
-
     // Get current accent color
     this.currentColor = this.config.spheres.colorPalette[0];
 
     // Create geometry (shared by all spheres)
-    // Use higher detail for desktop, lower for mobile
-    const segments = window.innerWidth > 768 ? 32 : 16;
-    const geometry = new THREE.SphereGeometry(1, segments, segments);
+    let geometry;
+
+    // Try to load .buf model if assets are enabled
+    if (this.config.assets.useExternalAssets) {
+      try {
+        const bufLoader = new BufLoader();
+        const isMobile = window.innerWidth <= 768;
+        const modelPath = isMobile
+          ? this.config.assets.models.sphereMobile
+          : this.config.assets.models.sphere;
+
+        console.log(`Loading sphere geometry from: ${modelPath}`);
+        geometry = await bufLoader.load(modelPath);
+        console.log('✓ Sphere geometry loaded from .buf file');
+      } catch (error) {
+        console.warn('Failed to load .buf geometry, using procedural fallback:', error);
+        geometry = null;
+      }
+    }
+
+    // Fallback to procedural geometry
+    if (!geometry) {
+      const segments = window.innerWidth > 768 ? 32 : 16;
+      geometry = new THREE.SphereGeometry(1, segments, segments);
+      console.log('✓ Using procedural sphere geometry');
+    }
 
     // Create spheres based on configuration
     let bodyIndex = 0;
