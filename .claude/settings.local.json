@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed:*)",
+      "Bash(temp_app_code.js)",
+      "Bash(\"D:\\projects\\Lumen-web\\extracted_user_code.js\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
