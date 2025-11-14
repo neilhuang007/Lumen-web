@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floating Spheres Animation</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 100%;
+      height: 100vh;
+      overflow-x: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #141515;
+      color: #ffffff;
+    }
+
+    #canvas-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #content {
+      position: relative;
+      z-index: 1;
+      padding: 100px 20px;
+      max-width: 800px;
+      margin: 0 auto;
+      pointer-events: none;
+    }
+
+    h1 {
+      font-size: 4rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      line-height: 1.1;
+    }
+
+    p {
+      font-size: 1.25rem;
+      line-height: 1.6;
+      opacity: 0.8;
+      margin-bottom: 2rem;
+    }
+
+    .spacer {
+      height: 200vh;
+    }
+
+    #loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 1.5rem;
+      opacity: 0.6;
+      z-index: 2;
+      transition: opacity 0.5s;
+    }
+
+    #loading.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .button {
+      display: inline-block;
+      padding: 12px 24px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      color: white;
+      text-decoration: none;
+      pointer-events: all;
+      transition: all 0.3s;
+      cursor: pointer;
+    }
+
+    .button:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 2.5rem;
+      }
+
+      p {
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- Loading Indicator -->
+  <div id="loading">Loading...</div>
+
+  <!-- Content -->
+  <div id="content">
+    <h1>Floating Spheres</h1>
+    <p>
+      An interactive 3D animation with physics-based spheres.
+      Move your mouse to push them around, or scroll to create paint effects.
+    </p>
+    <button class="button" id="change-color">Change Colors</button>
+
+    <div class="spacer"></div>
+
+    <h1>Smooth Scrolling</h1>
+    <p>
+      Watch as the spheres react to your scroll position,
+      creating fluid distortions and dreamy trails.
+    </p>
+
+    <div class="spacer"></div>
+
+    <h1>Interactive Physics</h1>
+    <p>
+      Each sphere has realistic physics with gravity, collisions,
+      and different material properties.
+    </p>
+  </div>
+
+  <!-- Three.js from CDN -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <!-- Main Application -->
+  <script type="module">
+    import { createAnimation } from './src/main.js';
+
+    // Initialize animation
+    const animation = await createAnimation(document.getElementById('canvas-container'));
+
+    // Hide loading screen
+    document.getElementById('loading').classList.add('hidden');
+
+    // Change color button
+    document.getElementById('change-color').addEventListener('click', () => {
+      animation.changeColor();
+    });
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      animation.resize();
+    });
+
+    // Handle scroll
+    let lastScrollY = window.scrollY;
+    window.addEventListener('scroll', () => {
+      const scrollY = window.scrollY;
+      const scrollDelta = scrollY - lastScrollY;
+      animation.onScroll(scrollDelta);
+      lastScrollY = scrollY;
+    });
+
+    // Handle mouse move
+    window.addEventListener('mousemove', (event) => {
+      animation.onMouseMove(event.clientX, event.clientY);
+    });
+  </script>
+</body>
+</html>
