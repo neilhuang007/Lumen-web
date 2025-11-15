@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sphere Cluster Animation - Full Recreation</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      width: 100%;
+      height: 100vh;
+      overflow: hidden;
+      background: #141515;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #info {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      font-family: monospace;
+      font-size: 12px;
+      background: rgba(0,0,0,0.7);
+      padding: 15px;
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+      z-index: 100;
+      line-height: 1.6;
+    }
+    #info strong {
+      color: #4CAF50;
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <strong>Sphere Cluster Animation</strong><br>
+    Based on original Lusion website<br>
+    <br>
+    Spheres: <span id="count">50</span><br>
+    FPS: <span id="fps">--</span><br>
+    <br>
+    <span style="color: #888">• Full neighbor tracking<br>
+    • Real-time AO/GI lighting<br>
+    • Physics simulation<br>
+    • 50 spheres for optimal clustering</span>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import { createAnimation } from './src/main.js';
+
+    // Create and start animation
+    const canvas = document.querySelector('canvas');
+    const animation = await createAnimation(canvas ? canvas.parentElement : document.body);
+
+    // Setup event listeners
+    window.addEventListener('resize', () => animation.resize());
+
+    window.addEventListener('mousemove', (e) => {
+      animation.onMouseMove(e.clientX, e.clientY);
+    });
+
+    window.addEventListener('wheel', (e) => {
+      animation.onScroll(e.deltaY);
+    });
+
+    // Update sphere count display
+    document.getElementById('count').textContent = animation.getTotalSphereCount();
+
+    console.log('✓ Animation ready!');
+  </script>
+</body>
+</html>
