@@ -1,245 +1,94 @@
-/**
- * Main Entry Point for Floating Spheres Animation
- * Orchestrates all components and manages the animation loop
- */
-
 import * as THREE from 'three';
-import { CONFIG, getEffectiveConfig } from './config.js';
 import { SceneManager } from './scene-manager.js';
 import { SpherePhysics } from './sphere-physics.js';
 import { SphereRenderer } from './sphere-renderer.js';
-import { PaintEffect } from './paint-effect.js';
-import { PostEffects } from './post-effects.js';
+import { screenPaint } from './paint-effect.js';
+import { blueNoise } from './blue-noise.js';
+import { BackgroundLayer } from './background.js';
+import { SPHERES_DATA } from './config.js';
 
-export class FloatingSpheresAnimation {
+class SphereClusterApp {
   constructor(container) {
     this.container = container;
-    this.config = getEffectiveConfig();
-
-    // Core components
-    this.sceneManager = null;
-    this.spherePhysics = null;
+    this.sceneManager = new SceneManager(container);
+    this.physics = null;
+    this.renderer = null;
     this.sphereRenderer = null;
-    this.paintEffect = null;
-    this.postEffects = null;
-
-    // Animation state
-    this.isRunning = false;
-    this.time = 0;
-    this.deltaTime = 0;
-    this.lastFrameTime = 0;
-
-    // Input state
-    this.mouse = { x: 0, y: 0, prevX: 0, prevY: 0 };
-    this.scroll = { delta: 0, total: 0 };
-
-    // Color state
-    this.currentColorIndex = Math.floor(Math.random() * this.config.spheres.colorPalette.length);
+    this.background = null;
+    this.mouse = new THREE.Vector2();
+    this.lastTime = performance.now();
+    this.running = false;
   }
 
-  /**
-   * Initialize all animation components
-   */
   async init() {
-    console.log('Initializing Floating Spheres Animation...');
-
-    // Initialize scene manager
-    this.sceneManager = new SceneManager(this.container, this.config);
     await this.sceneManager.init();
+    await blueNoise.init();
+    screenPaint.init(this.sceneManager.renderer);
+    screenPaint.resize(this.sceneManager.width, this.sceneManager.height);
 
-    // Initialize physics engine
-    this.spherePhysics = new SpherePhysics(this.config);
-    this.spherePhysics.init(this.getTotalSphereCount());
+    this.background = new BackgroundLayer(this.sceneManager.scene, screenPaint, blueNoise);
+    this.background.init();
 
-    // Initialize sphere renderer
-    this.sphereRenderer = new SphereRenderer(
-      this.sceneManager.scene,
-      this.sceneManager.camera,
-      this.config
-    );
-    await this.sphereRenderer.init(this.spherePhysics.bodies);
+    const bodies = SpherePhysics.createBodies(SPHERES_DATA);
+    this.physics = new SpherePhysics(bodies);
 
-    // Initialize paint effect
-    this.paintEffect = new PaintEffect(this.config);
-    this.paintEffect.init(this.sceneManager.renderer);
+    this.sphereRenderer = new SphereRenderer(this.sceneManager.scene, blueNoise);
+    await this.sphereRenderer.init(bodies);
 
-    // Initialize post-processing effects
-    this.postEffects = new PostEffects(this.sceneManager.renderer, this.config);
-    this.postEffects.init(this.sceneManager.scene, this.sceneManager.camera);
-
-    console.log('Animation initialized successfully');
+    this.renderer = this.sceneManager.renderer;
+    this.addEventListeners();
   }
 
-  /**
-   * Calculate total number of spheres based on config
-   */
-  getTotalSphereCount() {
-    const counts = this.config.spheres.counts;
-    return Object.values(counts).reduce((sum, count) => sum + count, 0);
-  }
-
-  /**
-   * Start the animation loop
-   */
-  start() {
-    if (this.isRunning) return;
-
-    this.isRunning = true;
-    this.lastFrameTime = performance.now();
-    this.animate();
-
-    console.log('Animation started');
-  }
-
-  /**
-   * Stop the animation loop
-   */
-  stop() {
-    this.isRunning = false;
-    console.log('Animation stopped');
-  }
-
-  /**
-   * Main animation loop
-   */
-  animate = () => {
-    if (!this.isRunning) return;
-
-    requestAnimationFrame(this.animate);
-
-    // Calculate delta time
-    const currentTime = performance.now();
-    this.deltaTime = Math.min((currentTime - this.lastFrameTime) / 1000, 0.1); // Cap at 100ms
-    this.lastFrameTime = currentTime;
-    this.time += this.deltaTime;
-
-    // Update components
-    this.update(this.deltaTime);
-
-    // Render
-    this.render();
-  }
-
-  /**
-   * Update all animation components
-   */
-  update(deltaTime) {
-    // Update paint effect
-    if (this.paintEffect) {
-      this.paintEffect.update(deltaTime, this.mouse, this.scroll);
-      this.scroll.delta *= 0.9; // Decay scroll delta
-    }
-
-    // Update physics
-    if (this.spherePhysics) {
-      this.spherePhysics.update(deltaTime, this.mouse, this.sceneManager.camera);
-    }
-
-    // Update sphere renderer (sync visual spheres with physics bodies)
-    if (this.sphereRenderer) {
-      this.sphereRenderer.update(deltaTime, this.spherePhysics.bodies);
-    }
-
-    // Update scene manager (camera animations, etc.)
-    if (this.sceneManager) {
-      this.sceneManager.update(deltaTime, this.time);
-    }
-
-    // Store previous mouse position
-    this.mouse.prevX = this.mouse.x;
-    this.mouse.prevY = this.mouse.y;
-  }
-
-  /**
-   * Render the scene
-   */
-  render() {
-    if (!this.sceneManager || !this.postEffects) return;
-
-    // Render the scene
-    this.postEffects.render(
-      this.sceneManager.scene,
-      this.sceneManager.camera,
-      this.paintEffect
-    );
-  }
-
-  /**
-   * Handle window resize
-   */
-  resize() {
-    if (this.sceneManager) {
+  addEventListeners() {
+    window.addEventListener('resize', () => {
       this.sceneManager.resize();
-    }
-    if (this.postEffects) {
-      this.postEffects.resize();
-    }
-    if (this.paintEffect) {
-      this.paintEffect.resize(window.innerWidth, window.innerHeight);
-    }
+      screenPaint.resize(this.sceneManager.width, this.sceneManager.height);
+    });
+
+    window.addEventListener('mousemove', (event) => {
+      const rect = this.container.getBoundingClientRect();
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = (event.clientY - rect.top) / rect.height;
+      this.mouse.set(x * 2 - 1, -(y * 2 - 1));
+    });
   }
 
-  /**
-   * Handle mouse move
-   */
-  onMouseMove(clientX, clientY) {
-    // Convert to normalized device coordinates (-1 to +1)
-    this.mouse.x = (clientX / window.innerWidth) * 2 - 1;
-    this.mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+  start() {
+    this.running = true;
+    this.lastTime = performance.now();
+    this.loop();
   }
 
-  /**
-   * Handle scroll
-   */
-  onScroll(scrollDelta) {
-    this.scroll.delta += scrollDelta;
-    this.scroll.total += scrollDelta;
+  loop = () => {
+    if (!this.running) return;
+    requestAnimationFrame(this.loop);
+    const now = performance.now();
+    const delta = Math.min((now - this.lastTime) / 1000, 1 / 20);
+    this.lastTime = now;
+    this.update(delta);
+    this.render();
+  };
+
+  update(delta) {
+    screenPaint.update(delta, this.mouse);
+    this.physics.update(delta, this.sceneManager.camera, this.mouse);
+    this.sphereRenderer.update(delta);
+    this.sceneManager.update(delta);
+    this.background.update(new THREE.Vector2(this.sceneManager.width, this.sceneManager.height));
   }
 
-  /**
-   * Change the color scheme
-   */
-  changeColor() {
-    // Cycle to next color in palette
-    this.currentColorIndex = (this.currentColorIndex + 1) % this.config.spheres.colorPalette.length;
-    const newColor = this.config.spheres.colorPalette[this.currentColorIndex];
-
-    console.log('Changing color to:', newColor);
-
-    // Apply impulse to all spheres for visual feedback
-    if (this.spherePhysics) {
-      this.spherePhysics.bodies.forEach(body => {
-        body.applyImpulse();
-      });
-    }
-
-    // Update sphere colors
-    if (this.sphereRenderer) {
-      this.sphereRenderer.updateColors(newColor);
-    }
+  render() {
+    this.renderer.render(this.sceneManager.scene, this.sceneManager.camera);
   }
 
-  /**
-   * Cleanup and dispose resources
-   */
-  dispose() {
-    this.stop();
-
-    if (this.postEffects) this.postEffects.dispose();
-    if (this.paintEffect) this.paintEffect.dispose();
-    if (this.sphereRenderer) this.sphereRenderer.dispose();
-    if (this.sceneManager) this.sceneManager.dispose();
-
-    console.log('Animation disposed');
+  getTotalSphereCount() {
+    return this.physics ? this.physics.bodies.length : 0;
   }
 }
 
-/**
- * Factory function to create and initialize the animation
- */
-export async function createAnimation(container) {
-  const animation = new FloatingSpheresAnimation(container);
-  await animation.init();
-  animation.start();
-  return animation;
+export async function createAnimation(container = document.body) {
+  const app = new SphereClusterApp(container);
+  await app.init();
+  app.start();
+  return app;
 }

@@ -1,300 +1,200 @@
-/**
- * Sphere Physics - Manages physics simulation for all spheres
- * Handles gravity, collisions, mouse interaction, and rotation
- */
-
 import * as THREE from 'three';
+import { PHYSICS_CONSTANTS } from './config.js';
+import { math } from './utils.js';
 
-export class SphereBody {
-  constructor(config, index) {
-    this.config = config;
-    this.index = index;
+const { GRAVITY_FACTOR, MOUSE_RADIUS, MOUSE_INFLUENCE, MOUSE_PUSH_FORCE, VELOCITY_DAMPING, RANDOM_FN } = PHYSICS_CONSTANTS;
 
-    // Physical properties
-    this.radius = config.spheres.baseRadius;
-    this.mass = 1.0;
-    this.density = 1.0;
-    this.friction = 2.0;
-    this.restitution = 0.8;
-    this.frictionTotal = 0;
+const random = RANDOM_FN;
 
-    // Kinematic state
+class SphereBody {
+  constructor(sphereConfig, isSemitransparent = false) {
+    this.radius = 1.05 * sphereConfig.radius;
+    this.density = sphereConfig.density;
+    this.friction = sphereConfig.friction;
+    this.restitution = sphereConfig.restitution;
+    this.isSemitransparent = isSemitransparent;
+
     this.position = new THREE.Vector3();
     this.velocity = new THREE.Vector3();
     this.position0 = new THREE.Vector3();
     this.velocity0 = new THREE.Vector3();
-
-    // Rotation
     this.quaternion = new THREE.Quaternion();
-    this.angularVelocity = new THREE.Vector3();
 
-    // Gravity
     this.gravityForce = new THREE.Vector3();
-    this.gravityAcceleration = new THREE.Vector3();
+    this.gravityAcc = new THREE.Vector3();
 
-    this.initialize();
-  }
+    this.angularVelocity = new THREE.Vector3();
+    this.frictionTot = 0;
 
-  /**
-   * Initialize position and velocity
-   */
-  initialize() {
-    const spread = this.config.physics.initialConditions.positionSpread;
-    const velFactor = this.config.physics.initialConditions.velocityFactor;
-
-    // Random position within spread
-    this.position0.set(
-      (Math.random() - 0.5) * spread,
-      (Math.random() - 0.5) * spread,
-      (Math.random() - 0.5) * spread / 2 // Less spread in Z
-    );
-
-    // Initial velocity based on position
-    this.velocity0.copy(this.position0).multiplyScalar(velFactor);
+    const volume = Math.PI * this.radius * 1.333333;
+    this.mass = volume * this.radius * this.radius * this.density;
+    this.inertia = this.mass * this.radius * this.radius * 0.4;
 
     this.reset();
-
-    // Calculate mass and volume
-    const volume = (4 / 3) * Math.PI * Math.pow(this.radius, 3);
-    this.mass = volume * this.density;
   }
 
-  /**
-   * Reset to initial conditions
-   */
   reset() {
+    this.position0.set(
+      (random() - 0.5) * 12,
+      (random() - 0.5) * 12,
+      this.isSemitransparent ? 7 + random() : (random() - 0.5) * 6
+    );
+    this.velocity0.copy(this.position0).multiplyScalar(-2);
     this.position.copy(this.position0);
     this.velocity.copy(this.velocity0);
     this.quaternion.identity();
-    this.angularVelocity.set(0, 0, 0);
+    this.frictionTot = 0;
   }
 
-  /**
-   * Apply impulse force (for user interactions)
-   */
   applyImpulse() {
-    // Push away from center with random force
     this.gravityForce.copy(this.position).negate().multiplyScalar(10);
-    this.gravityAcceleration.copy(this.gravityForce);
-
-    // Add random component
-    const randomForce = new THREE.Vector3(
-      Math.random() - 0.5,
-      Math.random() - 0.5,
-      Math.random() - 0.5
-    ).multiplyScalar(80);
-
-    this.gravityAcceleration.add(randomForce).multiplyScalar(1 / this.mass);
-    this.velocity.negate().add(this.gravityAcceleration);
+    this.gravityAcc.copy(this.gravityForce);
+    this.gravityForce.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(80);
+    this.gravityAcc.add(this.gravityForce).multiplyScalar(1 / this.mass);
+    this.velocity.negate();
+    this.velocity.add(this.gravityAcc);
   }
 
-  /**
-   * Update gravity acceleration
-   */
   updateGravity(deltaTime) {
-    const gravityFactor = this.config.physics.gravity.factor;
-
-    // Force toward center
-    this.gravityForce.copy(this.position).negate().multiplyScalar(gravityFactor);
-
-    // F = ma, so a = F/m
-    this.gravityAcceleration.copy(this.gravityForce).multiplyScalar(1 / this.mass);
-
-    // Apply friction damping
-    this.gravityAcceleration.multiplyScalar(1 / (1 + this.frictionTotal));
-
-    // Update velocity
-    this.velocity.addScaledVector(this.gravityAcceleration, deltaTime);
-
-    // Decay friction accumulation
-    this.frictionTotal *= 0.5;
+    this.gravityForce.copy(this.position).negate().multiplyScalar(GRAVITY_FACTOR);
+    this.gravityAcc.copy(this.gravityForce).multiplyScalar(1 / this.mass);
+    this.gravityAcc.multiplyScalar(1 / (1 + this.frictionTot));
+    this.velocity.addScaledVector(this.gravityAcc, deltaTime);
+    this.frictionTot *= 0.5;
   }
 
-  /**
-   * Update position and apply damping
-   */
-  update(deltaTime) {
-    // Update position
+  integrate(deltaTime) {
     this.position.addScaledVector(this.velocity, deltaTime);
-
-    // Apply velocity damping (air resistance)
-    const damping = this.config.physics.damping.velocity;
-    this.velocity.multiplyScalar(Math.pow(damping, deltaTime));
+    this.velocity.multiplyScalar(Math.pow(VELOCITY_DAMPING, deltaTime));
   }
 }
 
 export class SpherePhysics {
-  constructor(config) {
-    this.config = config;
-    this.bodies = [];
+  constructor(bodies = []) {
+    this.bodies = bodies;
+    this.isActive = true;
 
-    // Temp vectors to avoid allocations
+    this._mouse = new THREE.Vector3();
+    this._mousePrev = new THREE.Vector3();
+    this._mousePushForce = new THREE.Vector3();
+    this._mouseBA = new THREE.Vector3();
+
+    this._tempVec0 = new THREE.Vector3();
     this._tempVec1 = new THREE.Vector3();
     this._tempVec2 = new THREE.Vector3();
     this._tempVec3 = new THREE.Vector3();
-    this._mousePos3D = new THREE.Vector3();
-    this._mousePrev3D = new THREE.Vector3();
+    this._normal = new THREE.Vector3();
+    this._tempQuat = new THREE.Quaternion();
   }
 
-  /**
-   * Initialize physics bodies
-   */
-  init(count) {
-    console.log(`Initializing ${count} physics bodies...`);
-
-    for (let i = 0; i < count; i++) {
-      const body = new SphereBody(this.config, i);
-      this.bodies.push(body);
-    }
+  static createBodies(sphereData) {
+    return sphereData.map((config) => new SphereBody(config, config.isSemitransparent));
   }
 
-  /**
-   * Update all physics bodies
-   */
-  update(deltaTime, mouse, camera) {
-    // Update mouse position in 3D world space
-    this.updateMousePosition(mouse, camera);
-
-    // Update each body
-    for (let i = 0; i < this.bodies.length; i++) {
-      const body = this.bodies[i];
-
-      // Apply gravity
-      if (this.config.physics.gravity.enabled) {
-        body.updateGravity(deltaTime);
-      }
-
-      // Handle collisions with other bodies
-      if (this.config.physics.collisions.enabled) {
-        this.handleCollisions(body, i, deltaTime);
-      }
-
-      // Handle mouse interaction
-      if (this.config.physics.mouse.enabled) {
-        this.handleMouseInteraction(body, deltaTime);
-      }
-
-      // Update kinematics
-      body.update(deltaTime);
-
-      // Update rotation based on velocity
-      this.updateRotation(body, deltaTime);
-    }
-  }
-
-  /**
-   * Convert mouse position to 3D world space
-   */
-  updateMousePosition(mouse, camera) {
-    // Unproject mouse position to 3D space at z=0 plane
-    this._tempVec1.set(mouse.x, mouse.y, 0.5);
-    this._tempVec1.unproject(camera);
-
-    // Ray from camera through mouse position
-    this._tempVec1.sub(camera.position).normalize();
-
-    // Find intersection with z=0 plane
-    const t = -camera.position.z / this._tempVec1.z;
-    this._tempVec1.multiplyScalar(t);
-    this._mousePos3D.copy(camera.position).add(this._tempVec1);
-  }
-
-  /**
-   * Handle collisions between bodies
-   */
-  handleCollisions(bodyA, indexA, deltaTime) {
-    for (let j = indexA + 1; j < this.bodies.length; j++) {
-      const bodyB = this.bodies[j];
-
-      // Check for collision
-      const normal = this._tempVec1.copy(bodyA.position).sub(bodyB.position);
-      const distance = normal.length();
-      const minDistance = bodyA.radius + bodyB.radius;
-
-      if (distance < minDistance && distance > 0) {
-        // Collision detected - separate spheres
-        normal.normalize();
-        const separation = (minDistance - distance) * 0.5;
-
-        bodyA.position.addScaledVector(normal, separation);
-        bodyB.position.addScaledVector(normal, -separation);
-
-        // Add friction
-        const friction = Math.sqrt(bodyA.friction * bodyB.friction);
-        bodyA.frictionTotal += friction;
-        bodyB.frictionTotal += friction;
-
-        // Calculate collision response (elastic collision)
-        const vDiff = this._tempVec2.copy(bodyA.velocity).sub(bodyB.velocity);
-        const vRel = vDiff.dot(normal);
-
-        if (vRel < 0) continue; // Bodies moving apart
-
-        // Calculate impulse
-        const restitution = Math.min(bodyA.restitution, bodyB.restitution);
-        const massA = bodyA.mass;
-        const massB = bodyB.mass;
-
-        const impulse = -(1 + restitution) * vRel / (1 / massA + 1 / massB);
-
-        // Apply impulse
-        bodyA.velocity.addScaledVector(normal, impulse / massA / (1 + friction));
-        bodyB.velocity.addScaledVector(normal, -impulse / massB / (1 + friction));
-      }
-    }
-  }
-
-  /**
-   * Handle mouse interaction with body
-   */
-  handleMouseInteraction(body, deltaTime) {
-    const mouseConfig = this.config.physics.mouse;
-
-    // Vector from camera to body
-    const toBody = this._tempVec1.copy(body.position);
-    const toMouse = this._tempVec2.copy(this._mousePos3D);
-
-    // Find closest point on line from camera to mouse
-    const dot = toBody.dot(toMouse) / toMouse.lengthSq();
-    const closest = this._tempVec3.copy(toMouse).multiplyScalar(dot);
-
-    // Distance from body to mouse ray
-    const dist = toBody.sub(closest).length();
-    const minDist = body.radius + mouseConfig.influenceRadius;
-
-    if (dist < minDist) {
-      // Mouse is close enough - apply repulsion force
-      const normal = this._tempVec1.normalize();
-      const pushAmount = mouseConfig.pushForce * (1 - dist / minDist);
-
-      body.position.addScaledVector(normal, pushAmount);
-      body.velocity.addScaledVector(normal, -pushAmount / deltaTime);
-    }
-  }
-
-  /**
-   * Update body rotation based on velocity
-   */
-  updateRotation(body, deltaTime) {
-    if (body.velocity.lengthSq() < 0.0001) return;
-
-    // Cross product to get rotation axis
-    const axis = this._tempVec1.set(1, 1, 1).normalize().cross(body.velocity);
-    const angularSpeed = body.velocity.length();
-
-    if (angularSpeed > 0.001) {
-      axis.normalize();
-      const angle = angularSpeed * deltaTime * 0.5; // Slow down rotation
-
-      const rotation = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-      body.quaternion.premultiply(rotation);
-    }
-  }
-
-  /**
-   * Reset all bodies
-   */
   reset() {
-    this.bodies.forEach(body => body.reset());
+    for (const body of this.bodies) {
+      body.reset();
+    }
+  }
+
+  update(deltaTime, camera, mouseNDC) {
+    if (!this.isActive || this.bodies.length === 0) {
+      return;
+    }
+
+    const mouseRay = this._tempVec0.set(mouseNDC.x, mouseNDC.y, 0.5).unproject(camera);
+    mouseRay.sub(camera.position).normalize();
+    const distance = -camera.position.z / mouseRay.z;
+    this._mouse.copy(camera.position).addScaledVector(mouseRay, distance);
+
+    this._mousePushForce.copy(this._mouse).sub(this._mousePrev).multiplyScalar(MOUSE_PUSH_FORCE / Math.max(deltaTime, 1e-4));
+    this._mouseBA.copy(this._mouse).sub(camera.position);
+    const mouseLenSq = Math.max(this._mouseBA.lengthSq(), 1e-6);
+
+    this._mousePrev.copy(this._mouse);
+
+    for (let i = 0; i < this.bodies.length; i += 1) {
+      const body = this.bodies[i];
+      body.updateGravity(deltaTime);
+
+      this._tempVec1.copy(body.velocity);
+      this._tempVec2.copy(body.position);
+
+      for (let j = i + 1; j < this.bodies.length; j += 1) {
+        const other = this.bodies[j];
+
+        this._tempVec3.copy(other.position);
+        this._tempVec0.copy(other.velocity);
+
+        const normal = this._normal.copy(this._tempVec2).sub(this._tempVec3);
+        const distanceBetween = normal.length();
+        const minDistance = body.radius + other.radius;
+
+        if (distanceBetween < minDistance) {
+          const frictionMix = Math.sqrt(body.friction * other.friction);
+          body.frictionTot += frictionMix;
+          other.frictionTot += frictionMix;
+
+          normal.normalize();
+          const correction = 0.5 * (distanceBetween - minDistance);
+          this._tempVec2.addScaledVector(normal, -correction);
+          this._tempVec3.addScaledVector(normal, correction);
+          normal.normalize();
+
+          const velA = this._tempVec1.dot(normal);
+          const velB = this._tempVec0.dot(normal);
+          const massA = body.mass;
+          const massB = other.mass;
+          const restitutionA = body.restitution;
+          const restitutionB = other.restitution;
+
+          const newVelA = (massA * velA + massB * velB - massB * (velA - velB) * restitutionA) / (massA + massB);
+          const newVelB = (massA * velA + massB * velB - massA * (velB - velA) * restitutionB) / (massA + massB);
+
+          this._tempVec1.addScaledVector(normal, (newVelA - velA) / (1 + frictionMix));
+          this._tempVec0.addScaledVector(normal, (newVelB - velB) / (1 + frictionMix));
+
+          other.position.copy(this._tempVec3);
+          other.velocity.copy(this._tempVec0);
+        }
+      }
+
+      this._tempVec0.copy(this._tempVec2).sub(camera.position);
+      let mouseProj = this._tempVec0.dot(this._mouseBA) / mouseLenSq;
+      mouseProj = this._tempVec0.sub(this._tempVec3.copy(this._mouseBA).multiplyScalar(mouseProj)).length() - body.radius - MOUSE_RADIUS;
+
+      if (mouseProj < 0) {
+        this._tempVec0.copy(this._tempVec2).sub(camera.position).cross(this._mouseBA).normalize();
+        this._tempVec3.copy(this._mouseBA).cross(this._tempVec0).normalize();
+        this._tempVec2.addScaledVector(this._tempVec3, MOUSE_INFLUENCE * mouseProj);
+        this._tempVec3.multiplyScalar(-MOUSE_PUSH_FORCE / Math.max(deltaTime, 1e-4));
+        this._tempVec1.add(this._tempVec3);
+        this._tempVec1.add(this._mousePushForce);
+      }
+
+      const len = this._tempVec2.length();
+      if (len > 0) {
+        this._tempVec0.set(1, 1, 1).normalize();
+        let angle = 1 - Math.abs(this._tempVec0.dot(this._tempVec3.copy(this._tempVec2).normalize()));
+        angle *= deltaTime * math.fit(len, 0, 2, 0, 1) * 0.5;
+        angle *= (i % 2) * 2 - 1;
+        this._tempQuat.setFromAxisAngle(this._tempVec0, angle);
+        this._tempVec3.copy(this._tempVec2).applyQuaternion(this._tempQuat).sub(this._tempVec0.copy(this._tempVec2));
+        this._tempVec1.add(this._tempVec3);
+      }
+
+      this._tempVec0.copy(this._tempVec1).cross(this._tempVec2);
+      let angularLen = this._tempVec0.length();
+      angularLen /= body.inertia;
+      if (angularLen > 0) {
+        this._tempVec0.normalize();
+        this._tempQuat.setFromAxisAngle(this._tempVec0, angularLen * deltaTime);
+        body.quaternion.premultiply(this._tempQuat);
+      }
+
+      body.position.copy(this._tempVec2);
+      body.velocity.copy(this._tempVec1);
+      body.integrate(deltaTime);
+    }
   }
 }
