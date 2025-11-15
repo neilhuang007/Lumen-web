@@ -1,203 +1,166 @@
-/**
- * Paint Effect - Creates interactive paint/distortion effect based on mouse and scroll
- * Simulates fluid dynamics for organic motion
- */
-
 import * as THREE from 'three';
+import { SCREEN_PAINT_FRAGMENT_SHADER } from './shaders.js';
 
-export class PaintEffect {
-  constructor(config) {
-    this.config = config;
+const FULLSCREEN_GEOMETRY = new THREE.PlaneGeometry(2, 2);
 
-    // Render targets for paint simulation
-    this.renderTargetA = null;
-    this.renderTargetB = null;
-    this.blurTarget = null;
+export class ScreenPaint {
+  constructor() {
+    this.renderer = null;
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-    // Materials
-    this.paintMaterial = null;
-    this.blurMaterial = null;
+    this.lowRenderTarget = null;
+    this.lowBlurRenderTarget = null;
+    this.prevPaintRenderTarget = null;
+    this.currPaintRenderTarget = null;
 
-    // State
-    this.prevMousePos = { x: 0, y: 0 };
-    this.velocity = { x: 0, y: 0 };
+    this.material = null;
+    this.copyMaterial = null;
+    this.quad = null;
+
+    this.drawFrom = new THREE.Vector4();
+    this.drawTo = new THREE.Vector4();
+    this.velocity = new THREE.Vector2();
+
+    this.mouse = new THREE.Vector2();
+    this.prevMouse = new THREE.Vector2();
+    this.scrollOffset = new THREE.Vector2();
+    this._targetVelocity = new THREE.Vector2();
+
     this.enabled = true;
+    this.useNoise = false;
+    this.minRadius = 0;
+    this.maxRadius = 100;
+    this.radiusDistanceRange = 100;
+    this.pushStrength = 25;
+    this.accelerationDissipation = 0.8;
+    this.velocityDissipation = 0.985;
+    this.weight1Dissipation = 0.985;
+    this.weight2Dissipation = 0.5;
+
+    this.sharedUniforms = {
+      u_paintTexelSize: { value: new THREE.Vector2() },
+      u_paintTextureSize: { value: new THREE.Vector2() },
+      u_prevPaintTexture: { value: null },
+      u_currPaintTexture: { value: null },
+      u_lowPaintTexture: { value: null }
+    };
   }
 
-  /**
-   * Initialize paint effect
-   */
   init(renderer) {
-    const width = Math.floor(window.innerWidth / 4);
-    const height = Math.floor(window.innerHeight / 4);
-
-    // Create render targets
-    this.renderTargetA = new THREE.WebGLRenderTarget(width, height, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      format: THREE.RGBAFormat,
-      type: THREE.HalfFloatType
-    });
-
-    this.renderTargetB = this.renderTargetA.clone();
-    this.blurTarget = this.renderTargetA.clone();
-
-    // Create paint material (simplified)
-    this.paintMaterial = new THREE.ShaderMaterial({
+    this.renderer = renderer;
+    this.material = new THREE.ShaderMaterial({
       uniforms: {
-        uTexture: { value: null },
-        uMouse: { value: new THREE.Vector2() },
-        uPrevMouse: { value: new THREE.Vector2() },
-        uVelocity: { value: new THREE.Vector2() },
-        uRadius: { value: 0.1 },
-        uDissipation: { value: this.config.paintEffect.fluid.velocityDissipation },
-        uTime: { value: 0 }
+        u_lowPaintTexture: { value: null },
+        u_prevPaintTexture: this.sharedUniforms.u_prevPaintTexture,
+        u_paintTexelSize: this.sharedUniforms.u_paintTexelSize,
+        u_drawFrom: { value: this.drawFrom },
+        u_drawTo: { value: this.drawTo },
+        u_pushStrength: { value: this.pushStrength },
+        u_curlScale: { value: 0 },
+        u_curlStrength: { value: 0 },
+        u_vel: { value: this.velocity },
+        u_dissipations: { value: new THREE.Vector3(this.velocityDissipation, this.weight1Dissipation, this.weight2Dissipation) },
+        u_scrollOffset: { value: this.scrollOffset }
       },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D uTexture;
-        uniform vec2 uMouse;
-        uniform vec2 uPrevMouse;
-        uniform vec2 uVelocity;
-        uniform float uRadius;
-        uniform float uDissipation;
-        varying vec2 vUv;
-
-        void main() {
-          vec4 color = texture2D(uTexture, vUv);
-
-          // Distance from current point to mouse line
-          vec2 toMouse = vUv - uMouse;
-          float dist = length(toMouse);
-
-          // Add paint where mouse moved
-          if (dist < uRadius) {
-            float strength = 1.0 - (dist / uRadius);
-            strength = smoothstep(0.0, 1.0, strength);
-            color.rg += uVelocity * strength * 0.5;
-            color.b += strength * 0.8;
-          }
-
-          // Dissipate over time
-          color *= uDissipation;
-
-          gl_FragColor = color;
-        }
-      `
+      fragmentShader: SCREEN_PAINT_FRAGMENT_SHADER,
+      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position,1.0); }`,
+      transparent: false
     });
 
-    // Simple blur material
-    this.blurMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uTexture: { value: null },
-        uResolution: { value: new THREE.Vector2(width, height) },
-        uDirection: { value: new THREE.Vector2(1, 0) }
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D uTexture;
-        uniform vec2 uResolution;
-        uniform vec2 uDirection;
-        varying vec2 vUv;
+    this.copyMaterial = new THREE.MeshBasicMaterial({ map: null });
+    this.quad = new THREE.Mesh(FULLSCREEN_GEOMETRY, this.material);
+    this.scene.add(this.quad);
 
-        void main() {
-          vec2 texelSize = 1.0 / uResolution;
-          vec4 color = vec4(0.0);
+    this.lowRenderTarget = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    this.lowBlurRenderTarget = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    this.prevPaintRenderTarget = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    this.currPaintRenderTarget = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
 
-          // Simple 5-tap blur
-          color += texture2D(uTexture, vUv - texelSize * uDirection * 2.0) * 0.05;
-          color += texture2D(uTexture, vUv - texelSize * uDirection) * 0.25;
-          color += texture2D(uTexture, vUv) * 0.4;
-          color += texture2D(uTexture, vUv + texelSize * uDirection) * 0.25;
-          color += texture2D(uTexture, vUv + texelSize * uDirection * 2.0) * 0.05;
+    this.sharedUniforms.u_lowPaintTexture.value = this.lowRenderTarget.texture;
+    this.sharedUniforms.u_prevPaintTexture.value = this.prevPaintRenderTarget.texture;
+    this.sharedUniforms.u_currPaintTexture.value = this.currPaintRenderTarget.texture;
 
-          gl_FragColor = color;
-        }
-      `
-    });
+    this.material.uniforms.u_lowPaintTexture.value = this.lowRenderTarget.texture;
 
-    console.log('Paint Effect initialized');
+    this.clear();
   }
 
-  /**
-   * Update paint effect
-   */
-  update(deltaTime, mouse, scroll) {
-    if (!this.enabled) return;
+  clear() {
+    if (!this.renderer) return;
+    const clearColor = new THREE.Color(0.5, 0.5, 0);
+    this.renderer.setRenderTarget(this.lowRenderTarget);
+    this.renderer.setClearColor(clearColor, 0);
+    this.renderer.clear(true, true, true);
 
-    // Calculate velocity
-    const velX = mouse.x - this.prevMousePos.x;
-    const velY = mouse.y - this.prevMousePos.y;
+    this.renderer.setRenderTarget(this.lowBlurRenderTarget);
+    this.renderer.clear(true, true, true);
 
-    // Update velocity with decay
-    this.velocity.x = this.velocity.x * 0.9 + velX * 10;
-    this.velocity.y = this.velocity.y * 0.9 + velY * 10;
+    this.renderer.setRenderTarget(this.prevPaintRenderTarget);
+    this.renderer.clear(true, true, true);
 
-    // Calculate brush radius based on movement speed
-    const speed = Math.sqrt(velX * velX + velY * velY);
-    const radius = THREE.MathUtils.clamp(
-      speed * 100,
-      this.config.paintEffect.brush.minRadius,
-      this.config.paintEffect.brush.maxRadius
-    ) / window.innerHeight;
+    this.renderer.setRenderTarget(this.currPaintRenderTarget);
+    this.renderer.clear(true, true, true);
 
-    // Update uniforms
-    this.paintMaterial.uniforms.uMouse.value.set(
-      (mouse.x + 1) * 0.5,
-      (mouse.y + 1) * 0.5
-    );
-    this.paintMaterial.uniforms.uVelocity.value.set(this.velocity.x, this.velocity.y);
-    this.paintMaterial.uniforms.uRadius.value = radius;
-    this.paintMaterial.uniforms.uTime.value += deltaTime;
-
-    // Store previous mouse position
-    this.prevMousePos.x = mouse.x;
-    this.prevMousePos.y = mouse.y;
+    this.velocity.set(0, 0);
+    this.renderer.setRenderTarget(null);
   }
 
-  /**
-   * Get the current paint texture
-   */
-  getTexture() {
-    return this.renderTargetA.texture;
-  }
-
-  /**
-   * Handle resize
-   */
   resize(width, height) {
-    const w = Math.floor(width / 4);
-    const h = Math.floor(height / 4);
+    const targetWidth = Math.max(1, Math.floor(width / 4));
+    const targetHeight = Math.max(1, Math.floor(height / 4));
 
-    this.renderTargetA.setSize(w, h);
-    this.renderTargetB.setSize(w, h);
-    this.blurTarget.setSize(w, h);
+    this.currPaintRenderTarget.setSize(targetWidth, targetHeight);
+    this.prevPaintRenderTarget.setSize(targetWidth, targetHeight);
+    this.lowRenderTarget.setSize(Math.max(1, targetWidth >> 1), Math.max(1, targetHeight >> 1));
+    this.lowBlurRenderTarget.setSize(Math.max(1, targetWidth >> 1), Math.max(1, targetHeight >> 1));
 
-    if (this.blurMaterial) {
-      this.blurMaterial.uniforms.uResolution.value.set(w, h);
-    }
+    this.sharedUniforms.u_paintTexelSize.value.set(1 / targetWidth, 1 / targetHeight);
+    this.sharedUniforms.u_paintTextureSize.value.set(targetWidth, targetHeight);
+    this.clear();
   }
 
-  /**
-   * Cleanup resources
-   */
-  dispose() {
-    if (this.renderTargetA) this.renderTargetA.dispose();
-    if (this.renderTargetB) this.renderTargetB.dispose();
-    if (this.blurTarget) this.blurTarget.dispose();
-    if (this.paintMaterial) this.paintMaterial.dispose();
-    if (this.blurMaterial) this.blurMaterial.dispose();
+  update(deltaTime, mousePosition, scrollDelta = 0) {
+    if (!this.renderer || !this.enabled) return;
+
+    this._targetVelocity.set(mousePosition.x - this.prevMouse.x, mousePosition.y - this.prevMouse.y);
+    this.velocity.lerp(this._targetVelocity, 0.2);
+    this.prevMouse.copy(mousePosition);
+
+    const radius = THREE.MathUtils.clamp(
+      this.velocity.length() * this.radiusDistanceRange,
+      this.minRadius,
+      this.maxRadius
+    );
+
+    const texSize = this.sharedUniforms.u_paintTextureSize.value;
+    const toPixels = new THREE.Vector2(mousePosition.x, mousePosition.y);
+    toPixels.x = (toPixels.x + 1) * 0.5 * texSize.x;
+    toPixels.y = (toPixels.y + 1) * 0.5 * texSize.y;
+
+    this.drawFrom.set(this.drawTo.x, this.drawTo.y, this.drawTo.z, this.drawTo.w);
+    this.drawTo.set(toPixels.x, toPixels.y, radius, THREE.MathUtils.clamp(radius / this.maxRadius, 0, 1));
+
+    const swap = this.prevPaintRenderTarget;
+    this.prevPaintRenderTarget = this.currPaintRenderTarget;
+    this.currPaintRenderTarget = swap;
+    this.sharedUniforms.u_prevPaintTexture.value = this.prevPaintRenderTarget.texture;
+    this.sharedUniforms.u_currPaintTexture.value = this.currPaintRenderTarget.texture;
+
+    this.material.uniforms.u_lowPaintTexture.value = this.lowRenderTarget.texture;
+    this.material.uniforms.u_dissipations.value.set(this.velocityDissipation, this.weight1Dissipation, this.weight2Dissipation);
+
+    this.renderer.setRenderTarget(this.currPaintRenderTarget);
+    this.quad.material = this.material;
+    this.renderer.render(this.scene, this.camera);
+
+    this.renderer.setRenderTarget(this.lowRenderTarget);
+    this.copyMaterial.map = this.currPaintRenderTarget.texture;
+    this.quad.material = this.copyMaterial;
+    this.renderer.render(this.scene, this.camera);
+
+    this.renderer.setRenderTarget(null);
   }
 }
+
+export const screenPaint = new ScreenPaint();

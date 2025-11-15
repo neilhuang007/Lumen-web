@@ -65,28 +65,16 @@
     }
   </script>
 
-  <script type="module">
-    import { createAnimation } from './src/main.js';
+    <script type="module">
+      import { createAnimation } from './src/main.js';
 
-    // Create and start animation
-    const canvas = document.querySelector('canvas');
-    const animation = await createAnimation(canvas ? canvas.parentElement : document.body);
+      // Create and start animation
+      const animation = await createAnimation(document.body);
 
-    // Setup event listeners
-    window.addEventListener('resize', () => animation.resize());
+      // Update sphere count display
+      document.getElementById('count').textContent = animation.getTotalSphereCount();
 
-    window.addEventListener('mousemove', (e) => {
-      animation.onMouseMove(e.clientX, e.clientY);
-    });
-
-    window.addEventListener('wheel', (e) => {
-      animation.onScroll(e.deltaY);
-    });
-
-    // Update sphere count display
-    document.getElementById('count').textContent = animation.getTotalSphereCount();
-
-    console.log('✓ Animation ready!');
-  </script>
+      console.log('✓ Animation ready!');
+    </script>
 </body>
 </html>

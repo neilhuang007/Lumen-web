@@ -1,237 +1,134 @@
-/**
- * Sphere Renderer - Creates and manages visual representation of spheres
- * Handles materials, colors, and rendering order
- */
-
 import * as THREE from 'three';
 import { BufLoader } from './buf-loader.js';
+import { SPHERES_DATA, NEIGHBOUR_COUNT, SETTINGS } from './config.js';
+import { SPHERE_VERTEX_SHADER, SPHERE_FRAGMENT_SHADER } from './shaders.js';
+
+function generateMatcapTexture() {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, '#ffffff');
+  gradient.addColorStop(1, '#555566');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createMaterialConfig(sphere, matcapTexture, blueNoiseUniforms) {
+  const uniforms = {
+    u_color: { value: new THREE.Color(sphere.color) },
+    u_bgColor: { value: SETTINGS.BACKGROUND_COLOR.clone() },
+    u_sssColor: { value: new THREE.Color(sphere.sssColor) },
+    u_sss: { value: sphere.sss },
+    u_matcap: { value: matcapTexture },
+    u_lightPosition: { value: SETTINGS.LIGHT_POSITION.clone() },
+    u_selfPositionRadius: { value: new THREE.Vector4() },
+    u_selfRotation: { value: new THREE.Quaternion() },
+    u_nearPositionRadiusList: { value: Array.from({ length: NEIGHBOUR_COUNT }, () => new THREE.Vector4()) },
+    u_nearRotationList: { value: Array.from({ length: NEIGHBOUR_COUNT }, () => new THREE.Quaternion()) },
+    u_nearColorList: { value: Array.from({ length: NEIGHBOUR_COUNT }, () => new THREE.Color()) },
+    u_nearTransparencyLumaList: { value: Array.from({ length: NEIGHBOUR_COUNT }, () => new THREE.Vector2()) },
+    u_roughness: { value: sphere.isRough ? 0.8 : 0.1 },
+    u_time: { value: 0 }
+  };
+
+  Object.assign(uniforms, blueNoiseUniforms);
+
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: SPHERE_VERTEX_SHADER,
+    fragmentShader: `#define NEIGHBOUR_COUNT ${NEIGHBOUR_COUNT}\n${SPHERE_FRAGMENT_SHADER}`,
+    transparent: false,
+    depthWrite: true,
+    side: THREE.FrontSide
+  });
+
+  material.defines = { NEIGHBOUR_COUNT };
+
+  material.extensions = { derivatives: true };
+  return material;
+}
 
 export class SphereRenderer {
-  constructor(scene, camera, config) {
+  constructor(scene, blueNoise) {
     this.scene = scene;
-    this.camera = camera;
-    this.config = config;
-
-    this.sphereMeshes = [];
+    this.blueNoise = blueNoise;
+    this.meshes = [];
     this.materials = [];
-    this.currentColor = null;
+    this.geometry = null;
+    this.matcapTexture = null;
   }
 
-  /**
-   * Initialize sphere meshes
-   */
   async init(physicsBodies) {
-    console.log(`Creating ${physicsBodies.length} sphere meshes...`);
-
-    // Get current accent color
-    this.currentColor = this.config.spheres.colorPalette[0];
-
-    // Create geometry (shared by all spheres)
-    let geometry;
-
-    // Try to load .buf model if assets are enabled
-    if (this.config.assets.useExternalAssets) {
-      try {
-        const bufLoader = new BufLoader();
-        const isMobile = window.innerWidth <= 768;
-        const modelPath = isMobile
-          ? this.config.assets.models.sphereMobile
-          : this.config.assets.models.sphere;
-
-        console.log(`Loading sphere geometry from: ${modelPath}`);
-        geometry = await bufLoader.load(modelPath);
-        console.log('✓ Sphere geometry loaded from .buf file');
-      } catch (error) {
-        console.warn('Failed to load .buf geometry, using procedural fallback:', error);
-        geometry = null;
-      }
+    const loader = new BufLoader();
+    try {
+      this.geometry = await loader.load(`${SETTINGS.MODEL_PATH}${SETTINGS.CROSS_MODEL}`);
+    } catch (error) {
+      console.warn('Falling back to procedural sphere geometry:', error);
+      this.geometry = new THREE.SphereGeometry(1, 32, 32);
     }
 
-    // Fallback to procedural geometry
-    if (!geometry) {
-      const segments = window.innerWidth > 768 ? 32 : 16;
-      geometry = new THREE.SphereGeometry(1, segments, segments);
-      console.log('✓ Using procedural sphere geometry');
+    this.matcapTexture = generateMatcapTexture();
+
+    for (let i = 0; i < SPHERES_DATA.length; i += 1) {
+      const sphere = SPHERES_DATA[i];
+      const body = physicsBodies[i];
+      const material = createMaterialConfig(sphere, this.matcapTexture, this.blueNoise.sharedUniforms);
+      const mesh = new THREE.Mesh(this.geometry, material);
+      mesh.scale.setScalar(sphere.radius);
+      mesh.userData.physicsBody = body;
+      mesh.userData.config = sphere;
+      mesh.userData.uniforms = material.uniforms;
+      this.scene.add(mesh);
+      this.meshes.push(mesh);
+      this.materials.push(material);
     }
-
-    // Create spheres based on configuration
-    let bodyIndex = 0;
-
-    const counts = this.config.spheres.counts;
-
-    // Colored matte spheres
-    for (let i = 0; i < counts.coloredMatte; i++) {
-      this.createSphere(geometry, physicsBodies[bodyIndex++], {
-        color: this.currentColor,
-        roughness: this.config.rendering.materials.roughness.matte,
-        metalness: 0,
-        isColored: true
-      });
-    }
-
-    // Colored glossy spheres
-    for (let i = 0; i < counts.coloredGlossy; i++) {
-      this.createSphere(geometry, physicsBodies[bodyIndex++], {
-        color: this.currentColor,
-        roughness: this.config.rendering.materials.roughness.glossy,
-        metalness: 0.3,
-        isColored: true
-      });
-    }
-
-    // White matte spheres
-    for (let i = 0; i < counts.whiteMatte; i++) {
-      this.createSphere(geometry, physicsBodies[bodyIndex++], {
-        color: '#ffffff',
-        roughness: this.config.rendering.materials.roughness.matte,
-        metalness: 0
-      });
-    }
-
-    // White glossy spheres
-    for (let i = 0; i < counts.whiteGlossy; i++) {
-      this.createSphere(geometry, physicsBodies[bodyIndex++], {
-        color: '#ffffff',
-        roughness: this.config.rendering.materials.roughness.glossy,
-        metalness: 0.3
-      });
-    }
-
-    // Black matte spheres
-    for (let i = 0; i < counts.blackMatte; i++) {
-      this.createSphere(geometry, physicsBodies[bodyIndex++], {
-        color: '#111111',
-        roughness: this.config.rendering.materials.roughness.matte,
-        metalness: 0
-      });
-    }
-
-    // Black glossy spheres
-    for (let i = 0; i < counts.blackGlossy; i++) {
-      this.createSphere(geometry, physicsBodies[bodyIndex++], {
-        color: '#111111',
-        roughness: this.config.rendering.materials.roughness.glossy,
-        metalness: 0.5
-      });
-    }
-
-    // Transparent spheres (if enabled)
-    if (counts.transparentWhite > 0) {
-      for (let i = 0; i < counts.transparentWhite; i++) {
-        this.createSphere(geometry, physicsBodies[bodyIndex++], {
-          color: '#ffffff',
-          roughness: 0.1,
-          metalness: 0,
-          transparent: true,
-          opacity: 0.3
-        });
-      }
-    }
-
-    if (counts.transparentTinted > 0) {
-      // Create lighter version of current color
-      const tintedColor = new THREE.Color(this.currentColor);
-      tintedColor.offsetHSL(0, 0, 0.3);
-
-      for (let i = 0; i < counts.transparentTinted; i++) {
-        this.createSphere(geometry, physicsBodies[bodyIndex++], {
-          color: '#' + tintedColor.getHexString(),
-          roughness: 0.1,
-          metalness: 0,
-          transparent: true,
-          opacity: 0.3,
-          isColored: true
-        });
-      }
-    }
-
-    console.log('Sphere meshes created');
   }
 
-  /**
-   * Create a single sphere mesh
-   */
-  createSphere(geometry, physicsBody, options) {
-    const material = new THREE.MeshStandardMaterial({
-      color: options.color,
-      roughness: options.roughness,
-      metalness: options.metalness,
-      transparent: options.transparent || false,
-      opacity: options.opacity || 1.0,
-      side: THREE.FrontSide
-    });
+  update(deltaTime) {
+    this.blueNoise.update();
 
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.scale.setScalar(physicsBody.radius);
-    mesh.castShadow = this.config.rendering.shadows;
-    mesh.receiveShadow = this.config.rendering.shadows;
-
-    // Store metadata
-    mesh.userData.physicsBody = physicsBody;
-    mesh.userData.isColored = options.isColored || false;
-    mesh.userData.isTransparent = options.transparent || false;
-
-    this.scene.add(mesh);
-    this.sphereMeshes.push(mesh);
-    this.materials.push(material);
-  }
-
-  /**
-   * Update sphere positions and rotations from physics
-   */
-  update(deltaTime, physicsBodies) {
-    // Sort spheres by distance from camera for proper transparency
-    this.sphereMeshes.sort((a, b) => {
-      const distA = a.position.distanceToSquared(this.camera.position);
-      const distB = b.position.distanceToSquared(this.camera.position);
-      return distB - distA; // Back to front
-    });
-
-    // Update transforms
-    this.sphereMeshes.forEach((mesh, index) => {
+    for (let i = 0; i < this.meshes.length; i += 1) {
+      const mesh = this.meshes[i];
       const body = mesh.userData.physicsBody;
-
       mesh.position.copy(body.position);
       mesh.quaternion.copy(body.quaternion);
 
-      // Update render order for transparency
-      if (mesh.userData.isTransparent) {
-        mesh.renderOrder = -index; // Render transparent spheres last
+      const uniforms = mesh.userData.uniforms;
+      uniforms.u_selfPositionRadius.value.set(body.position.x, body.position.y, body.position.z, body.radius);
+      uniforms.u_selfRotation.value.copy(body.quaternion);
+      uniforms.u_time.value += deltaTime;
+    }
+
+    const neighbourBuffer = [];
+    for (let i = 0; i < this.meshes.length; i += 1) {
+      const mesh = this.meshes[i];
+      neighbourBuffer.length = 0;
+      for (let j = 0; j < this.meshes.length; j += 1) {
+        if (i === j) continue;
+        const other = this.meshes[j];
+        neighbourBuffer.push({ mesh: other, distance: mesh.position.distanceToSquared(other.position) });
       }
-    });
-  }
+      neighbourBuffer.sort((a, b) => a.distance - b.distance);
 
-  /**
-   * Update colors for colored spheres
-   */
-  updateColors(newColor) {
-    this.currentColor = newColor;
-
-    this.sphereMeshes.forEach((mesh) => {
-      if (mesh.userData.isColored) {
-        if (mesh.userData.isTransparent) {
-          // For transparent tinted spheres, use lighter version
-          const tintedColor = new THREE.Color(newColor);
-          tintedColor.offsetHSL(0, 0, 0.3);
-          mesh.material.color.set(tintedColor);
-        } else {
-          mesh.material.color.set(newColor);
-        }
+      const uniforms = mesh.userData.uniforms;
+      for (let n = 0; n < NEIGHBOUR_COUNT; n += 1) {
+        const neighbour = neighbourBuffer[n];
+        const otherMesh = neighbour.mesh;
+        const otherBody = otherMesh.userData.physicsBody;
+        const uniformPos = uniforms.u_nearPositionRadiusList.value[n];
+        uniformPos.set(otherBody.position.x, otherBody.position.y, otherBody.position.z, otherBody.radius);
+        uniforms.u_nearRotationList.value[n].copy(otherBody.quaternion);
+        const neighborColor = uniforms.u_nearColorList.value[n];
+        neighborColor.copy(otherMesh.userData.uniforms.u_color.value);
+        const luma = neighborColor.r * 0.299 + neighborColor.g * 0.587 + neighborColor.b * 0.114;
+        uniforms.u_nearTransparencyLumaList.value[n].set(otherMesh.userData.config.isSemitransparent ? 1 : 0, luma);
       }
-    });
-  }
-
-  /**
-   * Cleanup resources
-   */
-  dispose() {
-    this.sphereMeshes.forEach(mesh => {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      mesh.material.dispose();
-    });
-
-    this.sphereMeshes = [];
-    this.materials = [];
+    }
   }
 }
